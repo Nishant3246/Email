@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Rich Text Email Sender</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .editor {
+        border: 2px dashed #ccc;
+        padding: 20px;
+        min-height: 200px;
+        background-color: #f9f9f9;
+        margin-bottom: 10px;
+        text-align: left;
+      }
+      .editor.dragover {
+        background-color: #e0e0e0;
+        border-color: #999;
+      }
+      .toolbar button {
+        margin-right: 5px;
+        padding: 5px 10px;
+        cursor: pointer;
+      }
+      .uploaded-images {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .uploaded-images img {
+        max-width: 100px;
+        max-height: 100px;
+        object-fit: cover;
+      }
+      .flash-messages {
+        margin-top: 20px;
+      }
+      .flash-messages .success {
+        color: green;
+      }
+      .flash-messages .danger {
+        color: red;
+      }
+      #recipientsInput {
+        width: 100%;
+        min-height: 100px;
+      }
+      #imageInput,
+      #attachInput,
+      #excel_file {
+        width: 100%;
+      }
+      /* New styles for image sizing and alignment */
+      .email-img-small {
+        max-width: 200px !important;
+        height: auto !important;
+      }
+      .email-img-medium {
+        max-width: 400px !important;
+        height: auto !important;
+      }
+      .email-img-original {
+        max-width: 100% !important;
+        height: auto !important;
+      }
+      .text-left {
+        text-align: left;
+      }
+      .text-center {
+        text-align: center;
+      }
+      .text-right {
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Send Rich Text Emails</h1>
+    <form id="emailForm" enctype="multipart/form-data">
+      <label for="sender_email">From Email:</label>
+      <input
+        type="email"
+        id="sender_email"
+        name="sender_email"
+        required
+      /><br /><br />
+
+      <label for="excel_file">Attach Email List (Excel, max 16MB):</label>
+      <input
+        type="file"
+        id="excel_file"
+        name="excel_file"
+        accept=".xlsx, .xls"
+      /><br /><br />
+
+      <label for="recipients"
+        >OR Enter Recipients (comma or line-separated emails):</label
+      >
+      <textarea
+        id="recipientsInput"
+        name="recipients"
+        placeholder="Enter email addresses, one per line or comma-separated"
+      ></textarea
+      ><br /><br />
+
+      <label for="app_password">App Password:</label>
+      <input
+        type="password"
+        id="app_password"
+        name="app_password"
+        required
+      /><br /><br />
+
+      <label for="subject">Subject:</label>
+      <input type="text" id="subject" name="subject" required /><br /><br />
+
+      <label for="email_body">Email Body:</label>
+      <div class="toolbar">
+        <button type="button" onclick="format('bold')">Bold</button>
+        <button type="button" onclick="format('italic')">Italic</button>
+        <button type="button" onclick="format('underline')">Underline</button>
+        <button type="button" onclick="format('insertOrderedList')">
+          Ordered List
+        </button>
+        <button type="button" onclick="format('insertUnorderedList')">
+          Unordered List
+        </button>
+
+        <!-- Alignment Buttons -->
+        <button type="button" onclick="format('justifyLeft')">
+          Left Align
+        </button>
+        <button type="button" onclick="format('justifyCenter')">
+          Center Align
+        </button>
+        <button type="button" onclick="format('justifyRight')">
+          Right Align
+        </button>
+
+        <button type="button" onclick="triggerFileInput()">Insert Image</button>
+        <button type="button" onclick="triggerAttachInput()">
+          Attach File
+        </button>
+
+        <!-- Image Size Dropdown -->
+        <select id="imageSizeDropdown" onchange="setImageSize(this.value)">
+          <option value="default">Image Size</option>
+          <option value="small">Small (200px)</option>
+          <option value="medium">Medium (400px)</option>
+          <option value="original">Original Size</option>
+        </select>
+      </div>
+      <div
+        class="editor"
+        id="editor"
+        contenteditable="true"
+        ondrop="dropHandler(event)"
+        ondragover="dragOverHandler(event)"
+        ondragleave="dragLeaveHandler(event)"
+      >
+        Start typing your email content here...
+      </div>
+
+      <input type="hidden" id="email_body" name="email_body" />
+      <input
+        type="file"
+        id="imageInput"
+        name="images"
+        accept="image/*"
+        multiple
+        style="display: none"
+        onchange="handleFiles(this.files)"
+      />
+      <input
+        type="file"
+        id="attachments"
+        name="attachments"
+        multiple
+        onchange="handleAttachments(this)" />
+    <ul id="attachment-list"></ul>
+      <div id="uploadedImages" class="uploaded-images"></div>
+      <div id="uploadedAttachments" class="uploaded-attachments"></div>
+      <br />
+
+      <button type="submit">Send Emails</button>
+    </form>
+
+    <div class="flash-messages" id="flashMessages"></div>
+
+    <script>
+const form = document.getElementById("emailForm");
+const editor = document.getElementById("editor");
+const imageInput = document.getElementById("imageInput");
+const attachInput = document.getElementById("attachments");
+const excelFileInput = document.getElementById("excel_file");
+const uploadedImagesContainer = document.getElementById("uploadedImages");
+const uploadedAttachmentsContainer = document.getElementById("uploadedAttachments");
+const flashMessages = document.getElementById("flashMessages");
+const uploadedImages = [];
+const uploadedAttachments = [];
+
+const MAX_FILE_SIZE = 32 * 1024 * 1024; // 32MB
+
+function validateFileSize(files) {
+    let totalSize = 0;
+
+    // Check individual file sizes
+    for (let file of files) {
+        totalSize += file.size;
+        if (file.size > MAX_FILE_SIZE) {
+            alert(`File ${file.name} is too large. Maximum file size is 32MB.`);
+            return false;
+        }
+    }
+
+    // Check total size
+    if (totalSize > MAX_FILE_SIZE) {
+        alert(
+            `Total file size exceeds 32MB. Current total: ${(
+                totalSize /
+                (1024 * 1024)
+            ).toFixed(2)} MB`
+        );
+        return false;
+    }
+
+    return true;
+}
+
+function handleAttachments(input) {
+    const fileList = input.files;
+    const attachmentList = document.getElementById('attachment-list');
+
+    // Clear the previous list and uploaded attachments
+    attachmentList.innerHTML = '';
+    uploadedAttachmentsContainer.innerHTML = '';
+    uploadedAttachments.length = 0;
+
+    // Validate file sizes
+    if (!validateFileSize(fileList)) {
+        return;
+    }
+
+    // Display file names and add to uploadedAttachments
+    for (let i = 0; i < fileList.length; i++) {
+        const listItem = document.createElement('li');
+        listItem.textContent = fileList[i].name;
+        attachmentList.appendChild(listItem);
+
+        // Create attachment element
+        const attachmentElement = document.createElement('div');
+        attachmentElement.textContent = fileList[i].name;
+        uploadedAttachmentsContainer.appendChild(attachmentElement);
+
+        uploadedAttachments.push(fileList[i]);
+    }
+}
+
+function format(command, value = null) {
+    document.execCommand(command, false, value);
+}
+
+function triggerFileInput() {
+    imageInput.click();
+}
+
+function triggerAttachInput() {
+    attachInput.click();
+}
+
+function dragOverHandler(event) {
+    event.preventDefault();
+    editor.classList.add("dragover");
+}
+
+function dragLeaveHandler(event) {
+    editor.classList.remove("dragover");
+}
+
+function dropHandler(event) {
+    event.preventDefault();
+    editor.classList.remove("dragover");
+
+    const items = event.dataTransfer.items;
+    const droppedFiles = [];
+    for (let i = 0; i < items.length; i++) {
+        if (items[i].kind === "file") {
+            droppedFiles.push(items[i].getAsFile());
+        }
+    }
+
+    handleFiles(droppedFiles);
+}
+
+const inlineImages = [];
+
+function handleFiles(files) {
+    if (!validateFileSize(files)) {
+        return;
+    }
+
+    for (let file of files) {
+        if (file.type.startsWith("image/")) {
+            // Handle image files
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const editorImg = document.createElement("img");
+                editorImg.src = e.target.result;
+                editorImg.classList.add("email-img-medium"); // Default to medium size
+                editor.appendChild(editorImg);
+                inlineImages.push(e.target.result); // Store Base64 image
+            };
+            reader.readAsDataURL(file);
+        } else {
+            // Handle attachment files
+            uploadedAttachments.push(file);
+            const attachmentElement = document.createElement("div");
+            attachmentElement.textContent = file.name;
+            uploadedAttachmentsContainer.appendChild(attachmentElement);
+        }
+    }
+}
+
+function setImageSize(size) {
+    const selectedImage = document.querySelector(".selected-image");
+    if (!selectedImage) {
+        alert("Please select an image to resize.");
+        return;
+    }
+
+    // Remove previous size classes
+    selectedImage.classList.remove(
+        "email-img-small",
+        "email-img-medium",
+        "email-img-original"
+    );
+
+    // Add the selected size class
+    switch (size) {
+        case "small":
+            selectedImage.classList.add("email-img-small");
+            break;
+        case "medium":
+            selectedImage.classList.add("email-img-medium");
+            break;
+        case "original":
+            selectedImage.classList.add("email-img-original");
+            break;
+    }
+}
+
+// Handle image selection
+document.getElementById("editor").addEventListener("click", (event) => {
+    if (event.target.tagName === "IMG") {
+        const images = document.querySelectorAll("#editor img");
+        images.forEach((img) => img.classList.remove("selected-image"));
+        event.target.classList.add("selected-image");
+
+        // By default, set to medium size when selected
+        event.target.classList.add("email-img-medium");
+    }
+});
+
+form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+
+    // Update the hidden input field with the current content of the editor
+    const emailBodyInput = document.getElementById("email_body");
+    emailBodyInput.value = editor.innerHTML;
+
+    const formData = new FormData(this);
+
+    // Clear previous image/attachment uploads from the form data
+    formData.delete("images");
+    formData.delete("attachments");
+
+    // Add inline images as Base64 data
+    const allInlineImages = Array.from(editor.querySelectorAll('img'))
+        .map(img => img.src)
+        .filter(src => src.startsWith('data:image'));
+    formData.append("inline_images", JSON.stringify(allInlineImages));
+
+    // Add attachments to the form data
+    uploadedAttachments.forEach((file) => {
+        formData.append('attachments', file, file.name);
+    });
+
+    try {
+        const response = await fetch('/', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            handleServerResponse(data);
+        } else {
+            const text = await response.text();
+            throw new Error(`Unexpected response: ${text}`);
+        }
+    } catch (error) {
+        displayFlashMessage(`Error: ${error.message}`, 'danger');
+    }
+});
+
+function handleServerResponse(data) {
+    // Clear previous flash messages
+    flashMessages.innerHTML = "";
+
+    const messageElement = document.createElement("div");
+    if (data.success) {
+        messageElement.textContent =
+            data.message || "Emails sent successfully!";
+        messageElement.className = "success";
+    } else {
+        messageElement.textContent = data.error || "Failed to send emails.";
+        messageElement.className = "danger";
+    }
+
+    flashMessages.appendChild(messageElement);
+}
+
+function displayFlashMessage(message, type) {
+    const messageElement = document.createElement("div");
+    messageElement.textContent = message;
+    messageElement.className = type;
+    flashMessages.appendChild(messageElement);
+}
+    </script>
+  </body>
+</html>
